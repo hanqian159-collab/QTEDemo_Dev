@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <DebugType>embedded</DebugType>
+    <Nullable>disable</Nullable>
+    <AssemblyName>QTEDemo.Hajimi</AssemblyName>
+    <RootNamespace>QTEDemo</RootNamespace>
+    <OutputPath>..\QTEDemo\Scripts\</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup>
+    <GameManagedPath>F:\steam\steamapps\common\Witch's Apocalyptic Journey\Witch's Apocalyptic Journey_Data\Managed</GameManagedPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Witch"><HintPath>$(GameManagedPath)\Witch.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Witch.Core"><HintPath>$(GameManagedPath)\Witch.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Rougamo"><HintPath>$(GameManagedPath)\Rougamo.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mirror"><HintPath>$(GameManagedPath)\Mirror.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(GameManagedPath)\Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(GameManagedPath)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedPath)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManagedPath)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(GameManagedPath)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(GameManagedPath)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem"><HintPath>$(GameManagedPath)\Unity.InputSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(GameManagedPath)\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="RenameEntryDll" AfterTargets="Build">
+    <Move SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFiles="$(OutputPath)Entry.dll" Condition="Exists('..\QTEDemo\Scripts\QTEDemo.Hajimi.dll')" />
+    <Move SourceFiles="$(OutputPath)$(AssemblyName).pdb" DestinationFiles="$(OutputPath)Entry.pdb" Condition="Exists('..\QTEDemo\Scripts\QTEDemo.Hajimi.dll')" />
+  </Target>
+</Project>
