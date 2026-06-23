@@ -13,7 +13,7 @@ namespace QTEDemo
     {
         public const string ModTag = "QTEDemo";
         private const float QTE_DURATION = 3f;
-        private const float BAR_SPEED = 1.6f;
+        private const float BAR_SPEED = 1.8f;
         private const float TARGET_ZONE_RADIUS = 0.16f;
         private const float PERFECT_RADIUS = 0.04f;
         private const float GREAT_RADIUS = 0.10f;
@@ -27,33 +27,39 @@ namespace QTEDemo
         private static CoroutineRunner runner;
         private static bool canvasReady;
 
-        // UI 组件
         private static RectTransform barRailRt;
         private static RectTransform indicatorRt;
+        private static Image indicatorImg;
+        private static RectTransform indicatorDotRt;
         private static RectTransform targetZoneRt;
+        private static RectTransform perfectZoneRt;
         private static Text timerLabel;
         private static Text instructionLabel;
         private static Text resultLabel;
-        private static GameObject panelObj;
+        private static GameObject panelObj, tipObj;
 
         [ModInitialize]
         public static void Initialize(ModConfig config)
         {
-            Commands.Log(ModTag, "QTE Demo 模组已加载 (默认键: Q / 鼠标左键)");
+            Commands.Log(ModTag, "QTE Demo 模组已加载 (Q/鼠标左键)");
         }
 
-        // ── 玩家回合开始 → 触发 QTE ──
         [HookAfter(typeof(Fight_PlayerTurn), "Init")]
         public static void OnPlayerTurnInit(Fight_PlayerTurn instance)
         {
-            try { if (!qteActive) { StartQTE(); } }
+            try { if (!qteActive) StartQTE(); }
             catch (Exception ex) { Commands.LogError(ModTag, "Hook失败: " + ex.Message); }
         }
 
-        // ── QTE 流程 ──
         private static void StartQTE()
         {
             EnsureCanvas();
+            // 重置 UI：隐藏上次结果，显示计时和提示
+            if (resultLabel != null) resultLabel.gameObject.SetActive(false);
+            if (timerLabel != null) { timerLabel.gameObject.SetActive(true); timerLabel.text = "剩余: 3.0s"; timerLabel.color = new Color(0.9f, 0.9f, 1f); }
+            if (instructionLabel != null) instructionLabel.gameObject.SetActive(true);
+            if (tipObj != null) tipObj.SetActive(false);
+
             targetCenter = UnityEngine.Random.Range(0.18f, 0.82f);
             qteTimeLeft = QTE_DURATION;
             barNorm = 0f; barDir = 1f;
@@ -78,29 +84,16 @@ namespace QTEDemo
                 qteTimeLeft -= dt;
                 if (qteTimeLeft <= 0f) { ResolveQTE(float.NaN); yield break; }
 
-                // 滑块移动 (ping-pong)
                 float step = dt * BAR_SPEED;
                 barNorm += step * barDir;
                 if (barNorm >= 1f) { barNorm = 1f; barDir = -1f; }
                 if (barNorm <= 0f) { barNorm = 0f; barDir = 1f; }
 
-                // 判定触发: Q 键 或 鼠标左键
                 bool triggered = false;
-                try
-                {
-                    var kb = Keyboard.current;
-                    if (kb != null && kb[Key.Q].wasPressedThisFrame) triggered = true;
-                }
-                catch { }
-                try
-                {
-                    var mouse = Mouse.current;
-                    if (mouse != null && mouse.leftButton.wasPressedThisFrame) triggered = true;
-                }
-                catch { }
+                try { if (Keyboard.current != null && Keyboard.current[Key.Q].wasPressedThisFrame) triggered = true; } catch { }
+                try { if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) triggered = true; } catch { }
 
                 if (triggered) { ResolveQTE(barNorm); yield break; }
-
                 UpdateQTEDisplay();
                 yield return null;
             }
@@ -122,26 +115,31 @@ namespace QTEDemo
             Commands.Log(ModTag, "QTE: " + rank + " level=" + level);
             ShowResult(rank);
             if (level > 0) ApplyBuff(level);
-            if (runner != null) runner.StartCoroutine(HideAfter(1.5f));
+            if (runner != null) runner.StartCoroutine(HideAfter(1.8f));
         }
 
-        private static IEnumerator HideAfter(float s) { yield return new WaitForSeconds(s); if (qteRoot != null) qteRoot.SetActive(false); }
+        private static IEnumerator HideAfter(float s)
+        {
+            yield return new WaitForSeconds(s);
+            // 只隐藏面板，但保留结果文本的引用（供下次 StartQTE 清理）
+            if (qteRoot != null) qteRoot.SetActive(false);
+        }
 
-        // ── Lua 桥接：应用 buff_extraordinary ──
         private static void ApplyBuff(int level)
         {
             try
             {
                 var env = ScriptExecutor.luaEnv;
-                if (env == null) { Commands.LogError(ModTag, "luaEnv 不可用"); return; }
+                if (env == null) return;
                 var fn = env.Global.Get<Action<string>>("QTEDemoApplyBuff");
                 if (fn != null) fn(level.ToString());
-                else Commands.LogError(ModTag, "QTEDemoApplyBuff 未注册 (Scripts/Entry.lua 存在吗?)");
             }
-            catch (Exception ex) { Commands.LogError(ModTag, "ApplyBuff: " + ex.Message); }
+            catch { }
         }
 
-        // ── 创建 UI ──
+        // ══════════════════════════════════════════════════
+        //  UI 创建 — 紧凑布局 + 高可见度滑块
+        // ══════════════════════════════════════════════════
         private static void EnsureCanvas()
         {
             if (canvasReady && qteRoot != null) return;
@@ -150,93 +148,148 @@ namespace QTEDemo
             var canvas = qteRoot.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 32000;
-            qteRoot.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            var scaler = qteRoot.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
             qteRoot.AddComponent<GraphicRaycaster>();
             UnityEngine.Object.DontDestroyOnLoad(qteRoot);
             qteRoot.SetActive(false);
+
+            // 字体
+            Font font = null;
+            try { font = Font.CreateDynamicFontFromOSFont("Microsoft YaHei", 16); } catch { }
+            if (font == null) try { font = Font.CreateDynamicFontFromOSFont("SimHei", 16); } catch { }
+            if (font == null) try { font = Resources.GetBuiltinResource<Font>("Arial.ttf"); } catch { }
 
             // ── 背景遮罩 ──
             var bg = new GameObject("BG", typeof(RectTransform), typeof(Image));
             bg.transform.SetParent(qteRoot.transform, false);
             var bgImg = bg.GetComponent<Image>();
-            bgImg.color = new Color(0f, 0f, 0f, 0.55f);
+            bgImg.color = new Color(0f, 0f, 0f, 0.50f);
             var bgRt = bg.GetComponent<RectTransform>();
             bgRt.anchorMin = Vector2.zero; bgRt.anchorMax = Vector2.one; bgRt.sizeDelta = Vector2.zero;
 
-            // ── 主面板 ──
+            // ── 主面板 (420x155) ──
             panelObj = new GameObject("Panel", typeof(RectTransform), typeof(Image));
             panelObj.transform.SetParent(qteRoot.transform, false);
             var pnlImg = panelObj.GetComponent<Image>();
-            pnlImg.color = new Color(0.08f, 0.10f, 0.16f, 0.95f);
+            pnlImg.color = new Color(0.06f, 0.08f, 0.14f, 0.96f);
             var pnlRt = panelObj.GetComponent<RectTransform>();
             pnlRt.anchorMin = pnlRt.anchorMax = new Vector2(0.5f, 0.5f);
             pnlRt.pivot = new Vector2(0.5f, 0.5f);
-            pnlRt.sizeDelta = new Vector2(560f, 220f);
-            pnlRt.anchoredPosition = Vector2.zero;
+            pnlRt.sizeDelta = new Vector2(420f, 155f);
+            pnlRt.anchoredPosition = new Vector2(0f, 0f);
 
-            // ── 创建字体 ──
-            Font font = null;
-            try { font = Font.CreateDynamicFontFromOSFont("Microsoft YaHei", 20); } catch { }
-            if (font == null) try { font = Font.CreateDynamicFontFromOSFont("SimHei", 20); } catch { }
-            if (font == null) try { font = Resources.GetBuiltinResource<Font>("Arial.ttf"); } catch { }
+            // ── 标题 (靠上) ──
+            CreateText("Title", panelObj.transform, new Vector2(300, 24), new Vector2(0f, -12f),
+                "⚡ QTE 判定！", 18, TextAnchor.MiddleCenter, new Color(1f, 0.85f, 0.3f), font);
 
-            // ── 标题 ──
-            CreateText("Title", panelObj.transform, new Vector2(400, 36), new Vector2(0, -18),
-                "⚡ QTE 判定！", 24, TextAnchor.MiddleCenter, new Color(1f, 0.85f, 0.3f), font);
-
-            // ── 操作提示 ──
-            instructionLabel = CreateText("Instruction", panelObj.transform, new Vector2(400, 22), new Vector2(0, -50),
-                "按 [Q] 或点击鼠标左键在目标区内停止", 15, TextAnchor.MiddleCenter, new Color(0.7f, 0.75f, 0.85f), font);
-
-            // ── 滑轨背景 ──
+            // ── 滑轨背景 — 高对比度 ──
             var rail = new GameObject("Rail", typeof(RectTransform), typeof(Image));
             rail.transform.SetParent(panelObj.transform, false);
             var railImg = rail.GetComponent<Image>();
-            railImg.color = new Color(0.20f, 0.22f, 0.30f, 1f);
+            railImg.color = new Color(0.15f, 0.17f, 0.25f, 1f); // 深色滑轨背景
             barRailRt = rail.GetComponent<RectTransform>();
             barRailRt.anchorMin = barRailRt.anchorMax = new Vector2(0.5f, 0.5f);
             barRailRt.pivot = new Vector2(0.5f, 0.5f);
-            barRailRt.sizeDelta = new Vector2(460f, 28f);
-            barRailRt.anchoredPosition = new Vector2(0f, 20f);
+            barRailRt.sizeDelta = new Vector2(370f, 26f);
+            barRailRt.anchoredPosition = new Vector2(0f, 16f);
 
-            // ── 目标区（整体绿色背景） ──
+            // ── 滑轨边框线 (上下两条细线，增加视觉层次) ──
+            for (int side = 0; side < 2; side++)
+            {
+                var border = new GameObject("Border" + side, typeof(RectTransform), typeof(Image));
+                border.transform.SetParent(barRailRt, false);
+                var bImg = border.GetComponent<Image>();
+                bImg.color = new Color(0.3f, 0.35f, 0.5f, 0.6f);
+                var bRt = border.GetComponent<RectTransform>();
+                bRt.anchorMin = new Vector2(0f, side == 0 ? 1f : 0f);
+                bRt.anchorMax = new Vector2(1f, side == 0 ? 1f : 0f);
+                bRt.pivot = new Vector2(0.5f, side == 0 ? 1f : 0f);
+                bRt.sizeDelta = new Vector2(0f, 1f);
+                bRt.anchoredPosition = Vector2.zero;
+            }
+
+            // ── 目标区 ──
             var tz = new GameObject("TargetZone", typeof(RectTransform), typeof(Image));
             tz.transform.SetParent(barRailRt, false);
             targetZoneRt = tz.GetComponent<RectTransform>();
             var tzImg = tz.GetComponent<Image>();
-            tzImg.color = new Color(0.2f, 0.85f, 0.35f, 0.55f);
+            // 用半透明绿底 + 边框色
+            tzImg.color = new Color(0.15f, 0.80f, 0.30f, 0.30f);
             targetZoneRt.anchorMin = targetZoneRt.anchorMax = new Vector2(0f, 0f);
             targetZoneRt.pivot = new Vector2(0.5f, 0.5f);
-            targetZoneRt.sizeDelta = new Vector2(460f * TARGET_ZONE_RADIUS * 2f, 0f);
+            targetZoneRt.sizeDelta = new Vector2(370f * TARGET_ZONE_RADIUS * 2f, 0f);
 
-            // ── 完美区（金色内层） ──
+            // ── 目标区边框（亮绿色） ──
+            var tzBorder = new GameObject("TZBorder", typeof(RectTransform), typeof(Image));
+            tzBorder.transform.SetParent(targetZoneRt, false);
+            var tzBImg = tzBorder.GetComponent<Image>();
+            tzBImg.color = new Color(0.2f, 0.95f, 0.4f, 0.5f);
+            var tzBRt = tzBorder.GetComponent<RectTransform>();
+            tzBRt.anchorMin = Vector2.zero; tzBRt.anchorMax = Vector2.one;
+            tzBRt.sizeDelta = Vector2.zero;
+            tzBRt.anchoredPosition = Vector2.zero;
+
+            // ── 完美区（亮金色） ──
             var pz = new GameObject("PerfectZone", typeof(RectTransform), typeof(Image));
             pz.transform.SetParent(targetZoneRt, false);
+            perfectZoneRt = pz.GetComponent<RectTransform>();
             var pzImg = pz.GetComponent<Image>();
-            pzImg.color = new Color(1f, 0.9f, 0.15f, 0.75f);
-            var pzRt = pz.GetComponent<RectTransform>();
-            pzRt.anchorMin = new Vector2(0.5f - PERFECT_RADIUS / TARGET_ZONE_RADIUS * 0.5f, 0f);
-            pzRt.anchorMax = new Vector2(0.5f + PERFECT_RADIUS / TARGET_ZONE_RADIUS * 0.5f, 1f);
-            pzRt.sizeDelta = Vector2.zero;
+            pzImg.color = new Color(1f, 0.85f, 0.10f, 0.55f);
+            perfectZoneRt.anchorMin = new Vector2(0.5f - PERFECT_RADIUS / TARGET_ZONE_RADIUS * 0.5f, 0f);
+            perfectZoneRt.anchorMax = new Vector2(0.5f + PERFECT_RADIUS / TARGET_ZONE_RADIUS * 0.5f, 1f);
+            perfectZoneRt.sizeDelta = Vector2.zero;
 
-            // ── 指示器（白色竖条） ──
+            // ── 指示器（白色竖条 + 顶部圆点） ──
             var ind = new GameObject("Indicator", typeof(RectTransform), typeof(Image));
             ind.transform.SetParent(barRailRt, false);
             indicatorRt = ind.GetComponent<RectTransform>();
-            var indImg = ind.GetComponent<Image>();
-            indImg.color = Color.white;
+            indicatorImg = ind.GetComponent<Image>();
+            indicatorImg.color = Color.white;
             indicatorRt.anchorMin = indicatorRt.anchorMax = new Vector2(0f, 0f);
             indicatorRt.pivot = new Vector2(0.5f, 0.5f);
-            indicatorRt.sizeDelta = new Vector2(8f, 0f);
+            indicatorRt.sizeDelta = new Vector2(6f, 0f);  // 6px 竖条
 
-            // ── 计时 ──
-            timerLabel = CreateText("Timer", panelObj.transform, new Vector2(200, 24), new Vector2(0, 74),
-                "剩余: 3.0s", 18, TextAnchor.MiddleCenter, new Color(0.9f, 0.9f, 1f), font);
+            // 指示器顶端圆点
+            var dot = new GameObject("IndicatorDot", typeof(RectTransform), typeof(Image));
+            dot.transform.SetParent(indicatorRt, false);
+            indicatorDotRt = dot.GetComponent<RectTransform>();
+            var dotImg = dot.GetComponent<Image>();
+            dotImg.color = new Color(1f, 1f, 1f, 0.9f);
+            indicatorDotRt.anchorMin = indicatorDotRt.anchorMax = new Vector2(0.5f, 1f);
+            indicatorDotRt.pivot = new Vector2(0.5f, 1f);
+            indicatorDotRt.sizeDelta = new Vector2(14f, 14f);
+            indicatorDotRt.anchoredPosition = new Vector2(0f, -2f);
 
-            // ── 结果 ──
-            resultLabel = CreateText("Result", panelObj.transform, new Vector2(400, 50), new Vector2(0, -60),
-                "", 38, TextAnchor.MiddleCenter, Color.white, font);
+            // ── 底部栏：提示 + 计时 (同行左右分布) ──
+            instructionLabel = CreateText("Instruction", panelObj.transform, new Vector2(260, 20), new Vector2(-55f, -60f),
+                "按 [Q] 或点击鼠标左键停止", 13, TextAnchor.MiddleLeft, new Color(0.7f, 0.75f, 0.85f), font);
+
+            timerLabel = CreateText("Timer", panelObj.transform, new Vector2(100, 20), new Vector2(140f, -60f),
+                "剩余: 3.0s", 14, TextAnchor.MiddleRight, new Color(0.9f, 0.9f, 1f), font);
+
+            // ── 结果（居中） ──
+            resultLabel = CreateText("Result", panelObj.transform, new Vector2(350, 44), new Vector2(0f, -48f),
+                "", 36, TextAnchor.MiddleCenter, Color.white, font);
             resultLabel.gameObject.SetActive(false);
+
+            // ── 底部小提示（判定档位说明） ──
+            tipObj = new GameObject("Tip", typeof(RectTransform), typeof(Text));
+            tipObj.transform.SetParent(panelObj.transform, false);
+            var tipTxt = tipObj.GetComponent<Text>();
+            if (font != null) tipTxt.font = font;
+            tipTxt.text = "🟡完美 +50%   🟢优秀 +30%   🔵成功 +15%";
+            tipTxt.fontSize = 11;
+            tipTxt.alignment = TextAnchor.MiddleCenter;
+            tipTxt.color = new Color(0.5f, 0.55f, 0.65f);
+            var tipRt = tipObj.GetComponent<RectTransform>();
+            tipRt.anchorMin = tipRt.anchorMax = new Vector2(0.5f, 0f);
+            tipRt.pivot = new Vector2(0.5f, 0f);
+            tipRt.sizeDelta = new Vector2(380f, 18f);
+            tipRt.anchoredPosition = new Vector2(0f, 6f);
+            tipObj.SetActive(false);
 
             canvasReady = true;
         }
@@ -260,13 +313,11 @@ namespace QTEDemo
             return txt;
         }
 
-        // ── UI 帧更新 ──
         private static void UpdateQTEDisplay()
         {
             if (!canvasReady || qteRoot == null) return;
-
-            float railWidth = 460f;
-            if (barRailRt != null) railWidth = barRailRt.rect.width;
+            float railWidth = 370f;
+            if (barRailRt != null) railWidth = Mathf.Max(1f, barRailRt.rect.width);
 
             if (indicatorRt != null)
                 indicatorRt.anchoredPosition = new Vector2((barNorm - 0.5f) * railWidth, 0f);
@@ -275,39 +326,40 @@ namespace QTEDemo
             if (timerLabel != null)
             {
                 timerLabel.text = string.Format("剩余: {0:F1}s", qteTimeLeft);
-                timerLabel.color = qteTimeLeft <= 1f ? new Color(1f, 0.35f, 0.25f) : new Color(0.9f, 0.9f, 1f);
-                timerLabel.fontSize = qteTimeLeft <= 1f ? 20 : 18;
+                timerLabel.color = qteTimeLeft <= 1f ? new Color(1f, 0.3f, 0.2f) : new Color(0.9f, 0.9f, 1f);
             }
         }
 
         private static void ShowResult(string rank)
         {
             if (resultLabel == null) return;
-            resultLabel.gameObject.SetActive(true);
+            // 隐藏计时和提示，显示结果
             if (timerLabel != null) timerLabel.gameObject.SetActive(false);
             if (instructionLabel != null) instructionLabel.gameObject.SetActive(false);
+            if (tipObj != null) tipObj.SetActive(true);
+            resultLabel.gameObject.SetActive(true);
 
             switch (rank)
             {
                 case "PERFECT":
-                    resultLabel.text = "完美！伤害 +50%";
-                    resultLabel.color = new Color(1f, 0.9f, 0.15f);
-                    resultLabel.fontSize = 42;
+                    resultLabel.text = "完美！+50%";
+                    resultLabel.color = new Color(1f, 0.9f, 0.1f);
+                    resultLabel.fontSize = 38;
                     break;
                 case "GREAT":
-                    resultLabel.text = "优秀！伤害 +30%";
-                    resultLabel.color = new Color(0.2f, 0.95f, 0.45f);
-                    resultLabel.fontSize = 38;
+                    resultLabel.text = "优秀！+30%";
+                    resultLabel.color = new Color(0.2f, 0.95f, 0.4f);
+                    resultLabel.fontSize = 34;
                     break;
                 case "GOOD":
-                    resultLabel.text = "成功！伤害 +15%";
+                    resultLabel.text = "成功！+15%";
                     resultLabel.color = new Color(0.3f, 0.7f, 1f);
-                    resultLabel.fontSize = 38;
+                    resultLabel.fontSize = 34;
                     break;
                 default:
                     resultLabel.text = "错过… 无加成";
                     resultLabel.color = new Color(0.6f, 0.6f, 0.6f);
-                    resultLabel.fontSize = 34;
+                    resultLabel.fontSize = 30;
                     break;
             }
         }
